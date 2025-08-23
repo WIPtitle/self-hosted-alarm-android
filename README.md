@@ -1,13 +1,21 @@
-# Webapp wrapper android application
+# Self-hosted alarm service android app
 
-This is a base project to create an android application based on a web application with a simple
-Ntfy client included to receive push notifications.
+This android project is a fork of the more generic [webapp-wrapper-android](https://github.com/WIPtitle/webapp-wrapper-android).
 
-This is not intended to be used as-is, but it shows the isolated steps needed to receive and display
-push notifications with Ntfy if interested in a single topic.
+It consist of a simple fullscreen webview used to access the self-hosted alarm service webapp on a dedicated app instead of
+opening a tab in a browser; it also automatically fetches Ntfy credentials and opens a websocket to the correct Ntfy server
+to receive and show real time push notifications without having to rely on a not self-hosted solution.
 
-A cool, more thoughtful implementation of this project could be an android application that almost remove the 
-need to develop a real application for a self hosted webapp, without having to deal with non self-hosted services.
+## Installation
 
-For example, you can create your own webapp and instead of having to worry about setting up Firebase you can
-access it from this wrapper and connect it to your self-hosted Ntfy server given topic and credentials.
+Just build the apk and install it.
+
+## How to use
+
+If not yet configured the app will ask for your alarm service url: simply insert it (must be a public one if you want to access alarm server outside your network)
+with port if necessary (for example, http://100.200.100.200).
+
+Confirm it, and if everything is reachable and correctly configured you should now be able to use the app as a native android app, with push
+notifications served by Ntfy.
+
+There is an always-on notification used to keep the connection open, you can manually hide it without losing the connection.

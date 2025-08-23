@@ -15,7 +15,8 @@ class WsConnection(
     private val lastMessageId: String? = null,
     private val onMessage: (NotificationData) -> Unit,
     private val onStateChange: (ConnectionState) -> Unit,
-    private val onLastMessageIdUpdate: (String) -> Unit
+    private val onLastMessageIdUpdate: (String) -> Unit,
+    private val onPermanentFailure: (() -> Unit)? = null
 ) {
     private var webSocket: WebSocket? = null
     private val client = OkHttpClient.Builder()
@@ -26,6 +27,10 @@ class WsConnection(
     private val gson = Gson()
     private var closed = false
     private var currentLastMessageId: String? = lastMessageId
+
+    private var reconnectAttempts = 0
+
+    private val MAX_RECONNECT_ATTEMPTS = 5
 
     fun start() {
         if (closed || webSocket != null) return
@@ -112,6 +117,7 @@ class WsConnection(
     private inner class WebSocketListener : okhttp3.WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             Log.d(TAG, "WebSocket connected successfully")
+            reconnectAttempts = 0
             onStateChange(ConnectionState.CONNECTED)
         }
 
@@ -163,12 +169,20 @@ class WsConnection(
 
     private fun attemptReconnect() {
         if (!closed) {
+            reconnectAttempts++
+            if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+                Log.e(TAG, "Max reconnection attempts reached")
+                onPermanentFailure?.invoke()
+                return
+            }
+
+            val delay = minOf(5000L * reconnectAttempts, 30000L)  // Exponential backoff
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 if (!closed && webSocket == null) {
-                    Log.d(TAG, "Attempting to reconnect...")
+                    Log.d(TAG, "Attempting to reconnect... (attempt $reconnectAttempts)")
                     connectWebSocket()
                 }
-            }, 5000)
+            }, delay)
         }
     }
 

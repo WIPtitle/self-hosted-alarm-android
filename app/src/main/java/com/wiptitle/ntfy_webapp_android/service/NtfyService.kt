@@ -20,6 +20,10 @@ class NtfyService : Service() {
     private var wsConnection: WsConnection? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
+    private var reconnectAttempts = 0
+
+    private val MAX_RECONNECT_ATTEMPTS = 3
+
     override fun onCreate() {
         super.onCreate()
         prefsManager = PreferencesManager(this)
@@ -42,6 +46,7 @@ class NtfyService : Service() {
         if (!prefsManager.isNtfyConfigured()) return
 
         wsConnection?.close()
+        reconnectAttempts = 0
 
         wsConnection = WsConnection(
             baseUrl = prefsManager.ntfyUrl,
@@ -51,12 +56,23 @@ class NtfyService : Service() {
             lastMessageId = prefsManager.lastMessageId,
             onMessage = { notification ->
                 notificationHandler.showNotification(notification)
+                reconnectAttempts = 0  // Reset on successful message
             },
             onStateChange = { state ->
                 updateForegroundNotification(state)
+                if (state == WsConnection.ConnectionState.CONNECTED) {
+                    reconnectAttempts = 0
+                }
             },
             onLastMessageIdUpdate = { messageId ->
                 prefsManager.lastMessageId = messageId
+            },
+            onPermanentFailure = {
+                // Notify MainActivity about permanent failure
+                val intent = Intent(this, MainActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                intent.putExtra("ntfy_error", true)
+                startActivity(intent)
             }
         )
 

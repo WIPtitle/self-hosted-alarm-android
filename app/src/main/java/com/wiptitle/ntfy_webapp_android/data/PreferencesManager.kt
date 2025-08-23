@@ -13,12 +13,11 @@ class PreferencesManager(context: Context) {
         private const val KEY_NTFY_TOPIC = "ntfy_topic"
         private const val KEY_NTFY_USERNAME = "ntfy_username"
         private const val KEY_NTFY_PASSWORD = "ntfy_password"
-        private const val KEY_NTFY_ENABLED = "ntfy_enabled"
         private const val KEY_LAST_MESSAGE_ID = "last_message_id"
     }
 
-    var webAppUrl: String
-        get() = prefs.getString(KEY_WEBAPP_URL, "about:blank") ?: "about:blank"
+    var webAppUrl: String?
+        get() = prefs.getString(KEY_WEBAPP_URL, null)
         set(value) = prefs.edit().putString(KEY_WEBAPP_URL, value).apply()
 
     var ntfyUrl: String
@@ -37,10 +36,6 @@ class PreferencesManager(context: Context) {
         get() = prefs.getString(KEY_NTFY_PASSWORD, null)
         set(value) = prefs.edit().putString(KEY_NTFY_PASSWORD, value).apply()
 
-    var ntfyEnabled: Boolean
-        get() = prefs.getBoolean(KEY_NTFY_ENABLED, false)
-        set(value) = prefs.edit().putBoolean(KEY_NTFY_ENABLED, value).apply()
-
     var lastMessageId: String?
         get() = prefs.getString(KEY_LAST_MESSAGE_ID, null)
         set(value) = prefs.edit().putString(KEY_LAST_MESSAGE_ID, value).apply()
@@ -51,5 +46,9 @@ class PreferencesManager(context: Context) {
 
     fun clearNtfyLastMessage() {
         prefs.edit().remove(KEY_LAST_MESSAGE_ID).apply()
+    }
+
+    fun clearAll() {
+        prefs.edit().clear().apply()
     }
 }

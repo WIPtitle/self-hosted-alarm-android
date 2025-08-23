@@ -5,45 +5,57 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.WindowManager
 import android.webkit.*
-import androidx.activity.OnBackPressedCallback
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.drawerlayout.widget.DrawerLayout
-import androidx.navigation.NavController
-import androidx.navigation.fragment.NavHostFragment
-import androidx.navigation.ui.AppBarConfiguration
-import androidx.navigation.ui.navigateUp
-import androidx.navigation.ui.setupActionBarWithNavController
-import androidx.navigation.ui.setupWithNavController
-import com.google.android.material.navigation.NavigationView
+import com.google.android.material.textfield.TextInputEditText
 import com.wiptitle.ntfy_webapp_android.data.PreferencesManager
+import com.wiptitle.ntfy_webapp_android.network.NtfyConfigFetcher
 import com.wiptitle.ntfy_webapp_android.service.NtfyService
+import java.net.URL
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var drawerLayout: DrawerLayout
-    private lateinit var navController: NavController
-    private lateinit var appBarConfiguration: AppBarConfiguration
     private lateinit var webView: WebView
     private lateinit var prefsManager: PreferencesManager
+    private lateinit var ntfyConfigFetcher: NtfyConfigFetcher
+    private var urlDialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Make fullscreen
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_FULLSCREEN,
+            WindowManager.LayoutParams.FLAG_FULLSCREEN
+        )
+        supportActionBar?.hide()
+
         setContentView(R.layout.activity_main)
 
         prefsManager = PreferencesManager(this)
+        ntfyConfigFetcher = NtfyConfigFetcher()
 
-        setupToolbar()
         setupWebView()
-        setupNavigation()
-        setupBackPressHandler()
-        requestNotificationPermission()
-        startNtfyServiceIfNeeded()
-    }
 
-    private fun setupToolbar() {
-        setSupportActionBar(findViewById(R.id.toolbar))
+        // Check if we're coming from an ntfy error
+        if (intent.getBooleanExtra("ntfy_error", false)) {
+            handleNtfyDisconnection()
+        }
+
+        requestNotificationPermission()
+
+        // Check if we have a saved URL
+        val savedUrl = prefsManager.webAppUrl
+        if (savedUrl.isNullOrEmpty()) {
+            showUrlInputDialog()
+        } else {
+            loadWebApp(savedUrl)
+        }
     }
 
     private fun setupWebView() {
@@ -64,71 +76,133 @@ class MainActivity : AppCompatActivity() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 return false
             }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                super.onReceivedHttpError(view, request, errorResponse)
+
+                // Check if this is the main frame and we got a 4xx or 5xx error
+                if (request?.isForMainFrame == true) {
+                    val statusCode = errorResponse?.statusCode ?: 0
+                    if (statusCode in 400..599) {
+                        runOnUiThread {
+                            handleWebAppError("WebApp returned error: $statusCode")
+                        }
+                    }
+                }
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+
+                if (request?.isForMainFrame == true) {
+                    runOnUiThread {
+                        handleWebAppError("Failed to load WebApp")
+                    }
+                }
+            }
         }
 
         webView.webChromeClient = WebChromeClient()
 
-        webView.loadUrl(prefsManager.webAppUrl)
+        // Initially load blank page
+        webView.loadUrl("about:blank")
     }
 
-    private fun setupNavigation() {
-        drawerLayout = findViewById(R.id.drawer_layout)
-        val navView: NavigationView = findViewById(R.id.nav_view)
+    private fun showUrlInputDialog() {
+        if (urlDialog?.isShowing == true) return
 
-        val navHostFragment = supportFragmentManager
-            .findFragmentById(R.id.nav_host_fragment) as NavHostFragment
-        navController = navHostFragment.navController
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_url_input, null)
+        val urlInput = dialogView.findViewById<TextInputEditText>(R.id.url_input)
 
-        appBarConfiguration = AppBarConfiguration(
-            setOf(R.id.nav_webapp, R.id.nav_settings),
-            drawerLayout
-        )
+        // Pre-fill with saved URL if exists
+        prefsManager.webAppUrl?.let { urlInput.setText(it) }
 
-        setupActionBarWithNavController(navController, appBarConfiguration)
-        navView.setupWithNavController(navController)
-
-        navView.setNavigationItemSelectedListener { menuItem ->
-            when (menuItem.itemId) {
-                R.id.nav_webapp -> {
-                    navController.navigate(R.id.nav_webapp)
-                    drawerLayout.closeDrawers()
-                    webView.visibility = android.view.View.VISIBLE
-                    findViewById<android.view.View>(R.id.nav_host_fragment).visibility = android.view.View.GONE
-                    true
+        urlDialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .setCancelable(false)
+            .setPositiveButton("Connect") { _, _ ->
+                val url = urlInput.text.toString().trim()
+                if (url.isNotEmpty()) {
+                    processUrl(url)
+                } else {
+                    Toast.makeText(this, "Please enter a valid URL", Toast.LENGTH_SHORT).show()
+                    showUrlInputDialog()
                 }
-                R.id.nav_settings -> {
-                    navController.navigate(R.id.nav_settings)
-                    drawerLayout.closeDrawers()
-                    webView.visibility = android.view.View.GONE
-                    findViewById<android.view.View>(R.id.nav_host_fragment).visibility = android.view.View.VISIBLE
-                    true
+            }
+            .create()
+
+        urlDialog?.show()
+    }
+
+    private fun processUrl(url: String) {
+        // Save the URL
+        prefsManager.webAppUrl = url
+
+        // Load the webapp
+        loadWebApp(url)
+
+        // Fetch ntfy config and start service
+        fetchNtfyConfigAndConnect(url)
+    }
+
+    private fun loadWebApp(url: String) {
+        webView.loadUrl(url)
+    }
+
+    private fun fetchNtfyConfigAndConnect(webAppUrl: String) {
+        ntfyConfigFetcher.fetchConfig(webAppUrl) { config ->
+            runOnUiThread {
+                if (config != null) {
+                    try {
+                        // Extract domain from URL
+                        val url = URL(webAppUrl)
+                        val ntfyUrl = "${url.protocol}://${url.authority}"
+
+                        // Save ntfy configuration
+                        prefsManager.ntfyUrl = ntfyUrl
+                        prefsManager.ntfyTopic = config.topic
+                        prefsManager.ntfyUsername = config.user
+                        prefsManager.ntfyPassword = config.password
+
+                        // Start ntfy service
+                        startNtfyService()
+                    } catch (e: Exception) {
+                        Toast.makeText(this, "Failed to configure notifications", Toast.LENGTH_SHORT).show()
+                        e.printStackTrace()
+                    }
+                } else {
+                    Toast.makeText(this, "Failed to fetch notification config", Toast.LENGTH_SHORT).show()
                 }
-                else -> false
             }
         }
     }
 
-    private fun setupBackPressHandler() {
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                when {
-                    drawerLayout.isDrawerOpen(findViewById<NavigationView>(R.id.nav_view)) -> {
-                        drawerLayout.closeDrawers()
-                    }
-                    webView.visibility == android.view.View.VISIBLE && webView.canGoBack() -> {
-                        webView.goBack()
-                    }
-                    else -> {
-                        isEnabled = false
-                        onBackPressedDispatcher.onBackPressed()
-                    }
-                }
-            }
-        })
+    private fun handleWebAppError(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        webView.loadUrl("about:blank")
+        showUrlInputDialog()
     }
 
-    override fun onSupportNavigateUp(): Boolean {
-        return navController.navigateUp(appBarConfiguration) || super.onSupportNavigateUp()
+    fun handleNtfyDisconnection() {
+        runOnUiThread {
+            Toast.makeText(this, "Notification service disconnected", Toast.LENGTH_LONG).show()
+            webView.loadUrl("about:blank")
+            showUrlInputDialog()
+        }
+    }
+
+    private fun startNtfyService() {
+        val intent = Intent(this, NtfyService::class.java)
+        intent.action = NtfyService.ACTION_START
+        ContextCompat.startForegroundService(this, intent)
     }
 
     private fun requestNotificationPermission() {
@@ -147,32 +221,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startNtfyServiceIfNeeded() {
-        if (prefsManager.ntfyEnabled && prefsManager.isNtfyConfigured()) {
-            startNtfyService()
+    override fun onBackPressed() {
+        if (webView.canGoBack()) {
+            webView.goBack()
+        } else {
+            super.onBackPressed()
         }
-    }
-
-    fun startNtfyService() {
-        val intent = Intent(this, NtfyService::class.java)
-        intent.action = NtfyService.ACTION_START
-        ContextCompat.startForegroundService(this, intent)
-    }
-
-    fun stopNtfyService() {
-        val intent = Intent(this, NtfyService::class.java)
-        intent.action = NtfyService.ACTION_STOP
-        startService(intent)
-    }
-
-    fun restartNtfyService() {
-        val intent = Intent(this, NtfyService::class.java)
-        intent.action = NtfyService.ACTION_RESTART
-        ContextCompat.startForegroundService(this, intent)
-    }
-
-    fun reloadWebView() {
-        webView.loadUrl(prefsManager.webAppUrl)
     }
 
     companion object {
