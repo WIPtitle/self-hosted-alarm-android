@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "webapp-wrapper-android"
+rootProject.name = "Self-hosted alarm app"
 include(":app")
  

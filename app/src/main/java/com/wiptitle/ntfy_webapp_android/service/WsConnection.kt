@@ -161,6 +161,14 @@ class WsConnection(
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             Log.e(TAG, "WebSocket failure - Code: ${response?.code}", t)
+
+            // Check for authentication errors
+            if (response?.code == 401 || response?.code == 403) {
+                Log.e(TAG, "Authentication failed, requesting credential refresh")
+                onPermanentFailure?.invoke()
+                return
+            }
+
             onStateChange(ConnectionState.DISCONNECTED)
             this@WsConnection.webSocket = null
             attemptReconnect()
@@ -170,13 +178,15 @@ class WsConnection(
     private fun attemptReconnect() {
         if (!closed) {
             reconnectAttempts++
-            if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-                Log.e(TAG, "Max reconnection attempts reached")
+
+            // After a few attempts, request credential refresh
+            if (reconnectAttempts >= 3) {
+                Log.e(TAG, "Multiple reconnection attempts failed, requesting credential refresh")
                 onPermanentFailure?.invoke()
                 return
             }
 
-            val delay = minOf(5000L * reconnectAttempts, 30000L)  // Exponential backoff
+            val delay = minOf(5000L * reconnectAttempts, 15000L)  // Cap at 15 seconds
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 if (!closed && webSocket == null) {
                     Log.d(TAG, "Attempting to reconnect... (attempt $reconnectAttempts)")

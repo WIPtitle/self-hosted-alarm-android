@@ -9,6 +9,7 @@ import android.view.LayoutInflater
 import android.view.WindowManager
 import android.webkit.*
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -41,20 +42,22 @@ class MainActivity : AppCompatActivity() {
         ntfyConfigFetcher = NtfyConfigFetcher()
 
         setupWebView()
+        setupBackPressHandler()
+        requestNotificationPermission()
 
         // Check if we're coming from an ntfy error
         if (intent.getBooleanExtra("ntfy_error", false)) {
             handleNtfyDisconnection()
-        }
-
-        requestNotificationPermission()
-
-        // Check if we have a saved URL
-        val savedUrl = prefsManager.webAppUrl
-        if (savedUrl.isNullOrEmpty()) {
-            showUrlInputDialog()
         } else {
-            loadWebApp(savedUrl)
+            // Check if we have a saved URL
+            val savedUrl = prefsManager.webAppUrl
+            if (savedUrl.isNullOrEmpty()) {
+                showUrlInputDialog()
+            } else {
+                loadWebApp(savedUrl)
+                // Always fetch fresh credentials on app start
+                fetchNtfyConfigAndConnect(savedUrl)
+            }
         }
     }
 
@@ -116,6 +119,20 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("about:blank")
     }
 
+    private fun setupBackPressHandler() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (webView.canGoBack()) {
+                    webView.goBack()
+                } else {
+                    // If we can't go back in WebView, let the system handle it
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+    }
+
     private fun showUrlInputDialog() {
         if (urlDialog?.isShowing == true) return
 
@@ -157,7 +174,7 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(url)
     }
 
-    private fun fetchNtfyConfigAndConnect(webAppUrl: String) {
+    fun fetchNtfyConfigAndConnect(webAppUrl: String) {
         ntfyConfigFetcher.fetchConfig(webAppUrl) { config ->
             runOnUiThread {
                 if (config != null) {
@@ -172,8 +189,8 @@ class MainActivity : AppCompatActivity() {
                         prefsManager.ntfyUsername = config.user
                         prefsManager.ntfyPassword = config.password
 
-                        // Start ntfy service
-                        startNtfyService()
+                        // Restart ntfy service with new credentials
+                        restartNtfyService()
                     } catch (e: Exception) {
                         Toast.makeText(this, "Failed to configure notifications", Toast.LENGTH_SHORT).show()
                         e.printStackTrace()
@@ -193,15 +210,21 @@ class MainActivity : AppCompatActivity() {
 
     fun handleNtfyDisconnection() {
         runOnUiThread {
-            Toast.makeText(this, "Notification service disconnected", Toast.LENGTH_LONG).show()
-            webView.loadUrl("about:blank")
-            showUrlInputDialog()
+            val savedUrl = prefsManager.webAppUrl
+            if (!savedUrl.isNullOrEmpty()) {
+                Toast.makeText(this, "Reconnecting notification service...", Toast.LENGTH_SHORT).show()
+                // Re-fetch credentials and reconnect
+                fetchNtfyConfigAndConnect(savedUrl)
+            } else {
+                // If no URL saved, show dialog
+                showUrlInputDialog()
+            }
         }
     }
 
-    private fun startNtfyService() {
+    private fun restartNtfyService() {
         val intent = Intent(this, NtfyService::class.java)
-        intent.action = NtfyService.ACTION_START
+        intent.action = NtfyService.ACTION_RESTART
         ContextCompat.startForegroundService(this, intent)
     }
 
@@ -218,14 +241,6 @@ class MainActivity : AppCompatActivity() {
                     NOTIFICATION_PERMISSION_REQUEST_CODE
                 )
             }
-        }
-    }
-
-    override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
-        } else {
-            super.onBackPressed()
         }
     }
 
