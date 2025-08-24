@@ -1,15 +1,16 @@
 package com.wiptitle.ntfy_webapp_android.service
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
+import android.app.*
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.wiptitle.ntfy_webapp_android.MainActivity
 import com.wiptitle.ntfy_webapp_android.data.PreferencesManager
 import com.wiptitle.ntfy_webapp_android.notification.NotificationHandler
@@ -19,6 +20,7 @@ class NtfyService : Service() {
     private lateinit var notificationHandler: NotificationHandler
     private var wsConnection: WsConnection? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var isServiceStarted = false
 
     override fun onCreate() {
         super.onCreate()
@@ -26,7 +28,18 @@ class NtfyService : Service() {
         notificationHandler = NotificationHandler(this)
 
         acquireWakeLock()
-        startForeground(NOTIFICATION_ID, createForegroundNotification())
+
+        val notification = createForegroundNotification()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -40,6 +53,8 @@ class NtfyService : Service() {
 
     private fun startConnection() {
         if (!prefsManager.isNtfyConfigured()) return
+
+        isServiceStarted = true
 
         wsConnection?.close()
 
@@ -68,6 +83,7 @@ class NtfyService : Service() {
     }
 
     private fun stopConnection() {
+        isServiceStarted = false
         wsConnection?.close()
         wsConnection = null
         stopForeground(true)
@@ -138,6 +154,7 @@ class NtfyService : Service() {
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 setShowBadge(false)
+                description = "Keeps connection alive for instant notifications"
             }
             val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.createNotificationChannel(channel)
@@ -154,12 +171,51 @@ class NtfyService : Service() {
     }
 
     override fun onDestroy() {
+        if (isServiceStarted) {
+            val intent = Intent(this, AutoRestartReceiver::class.java)
+            sendBroadcast(intent)
+        }
+
         wsConnection?.close()
         wakeLock?.release()
         super.onDestroy()
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (prefsManager.isNtfyConfigured()) {
+            val restartServiceIntent = Intent(applicationContext, NtfyService::class.java).also {
+                it.setPackage(packageName)
+                it.action = ACTION_RESTART
+            }
+
+            val restartServicePendingIntent = PendingIntent.getService(
+                this, 1, restartServiceIntent,
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val alarmService = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            alarmService.set(
+                AlarmManager.ELAPSED_REALTIME,
+                SystemClock.elapsedRealtime() + 1000,
+                restartServicePendingIntent
+            )
+        }
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
+
+    class AutoRestartReceiver : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val prefsManager = PreferencesManager(context)
+            if (prefsManager.isNtfyConfigured()) {
+                val serviceIntent = Intent(context, NtfyService::class.java).apply {
+                    action = ACTION_RESTART
+                }
+                ContextCompat.startForegroundService(context, serviceIntent)
+            }
+        }
+    }
 
     companion object {
         const val ACTION_START = "START"
