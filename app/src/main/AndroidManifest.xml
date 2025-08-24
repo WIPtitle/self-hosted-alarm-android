@@ -28,7 +28,8 @@
         <service
             android:name=".service.NtfyService"
             android:foregroundServiceType="dataSync"
-            android:exported="false" />
+            android:exported="false"
+            android:stopWithTask="false" />
 
     </application>
 </manifest>
