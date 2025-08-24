@@ -13,11 +13,13 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.wiptitle.ntfy_webapp_android.MainActivity
 import com.wiptitle.ntfy_webapp_android.data.PreferencesManager
+import com.wiptitle.ntfy_webapp_android.network.NtfyConfigFetcher
 import com.wiptitle.ntfy_webapp_android.notification.NotificationHandler
 
 class NtfyService : Service() {
     private lateinit var prefsManager: PreferencesManager
     private lateinit var notificationHandler: NotificationHandler
+    private lateinit var configFetcher: NtfyConfigFetcher
     private var wsConnection: WsConnection? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var isServiceStarted = false
@@ -26,6 +28,7 @@ class NtfyService : Service() {
         super.onCreate()
         prefsManager = PreferencesManager(this)
         notificationHandler = NotificationHandler(this)
+        configFetcher = NtfyConfigFetcher()
 
         acquireWakeLock()
 
@@ -73,13 +76,41 @@ class NtfyService : Service() {
             onLastMessageIdUpdate = { messageId ->
                 prefsManager.lastMessageId = messageId
             },
-            onPermanentFailure = {
-                // Request MainActivity to re-fetch credentials
-                notifyMainActivityToRefreshCredentials()
+            onCredentialsNeeded = { callback ->
+                fetchFreshCredentials(callback)
             }
         )
 
         wsConnection?.start()
+    }
+
+    private fun fetchFreshCredentials(callback: (String, String, String?, String?) -> Unit) {
+        val webAppUrl = prefsManager.webAppUrl
+        if (webAppUrl.isNullOrEmpty()) {
+            callback(prefsManager.ntfyUrl, prefsManager.ntfyTopic, prefsManager.ntfyUsername, prefsManager.ntfyPassword)
+            return
+        }
+
+        configFetcher.fetchConfig(webAppUrl) { config ->
+            if (config != null) {
+                try {
+                    val url = java.net.URL(webAppUrl)
+                    val ntfyUrl = "${url.protocol}://${url.authority}"
+
+                    prefsManager.ntfyUrl = ntfyUrl
+                    prefsManager.ntfyTopic = config.topic
+                    prefsManager.ntfyUsername = config.user
+                    prefsManager.ntfyPassword = config.password
+
+                    callback(ntfyUrl, config.topic, config.user, config.password)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    callback(prefsManager.ntfyUrl, prefsManager.ntfyTopic, prefsManager.ntfyUsername, prefsManager.ntfyPassword)
+                }
+            } else {
+                callback(prefsManager.ntfyUrl, prefsManager.ntfyTopic, prefsManager.ntfyUsername, prefsManager.ntfyPassword)
+            }
+        }
     }
 
     private fun stopConnection() {
@@ -93,15 +124,7 @@ class NtfyService : Service() {
     private fun restartConnection() {
         wsConnection?.close()
         wsConnection = null
-        // Don't clear last message on restart to continue from where we left off
         startConnection()
-    }
-
-    private fun notifyMainActivityToRefreshCredentials() {
-        val intent = Intent(this, MainActivity::class.java)
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        intent.putExtra("ntfy_error", true)
-        startActivity(intent)
     }
 
     private fun createForegroundNotification(): Notification {
@@ -115,7 +138,7 @@ class NtfyService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Self-hosted alarm app")
+            .setContentTitle("Home alarm system")
             .setContentText("Connecting...")
             .setContentIntent(pendingIntent)
             .setSound(null)
@@ -134,7 +157,7 @@ class NtfyService : Service() {
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Self-hosted alarm app")
+            .setContentTitle("Home alarm system")
             .setContentText(text)
             .setSound(null)
             .setShowWhen(false)
@@ -150,7 +173,7 @@ class NtfyService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID_SERVICE,
-                "Self-hosted alarm app",
+                "Home alarm system",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 setShowBadge(false)
@@ -167,7 +190,7 @@ class NtfyService : Service() {
             PowerManager.PARTIAL_WAKE_LOCK,
             "NtfyService::WakeLock"
         )
-        wakeLock?.acquire(10*60*1000L)
+        wakeLock?.acquire()
     }
 
     override fun onDestroy() {

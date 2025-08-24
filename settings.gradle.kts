@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Self-hosted alarm app"
+rootProject.name = "Home alarm system"
 include(":app")
  

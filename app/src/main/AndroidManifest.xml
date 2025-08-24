@@ -33,7 +33,8 @@
             android:name=".service.NtfyService"
             android:foregroundServiceType="specialUse"
             android:stopWithTask="false"
-            android:exported="false" />
+            android:exported="false"
+            android:process=":remote" />
 
         <receiver
             android:name=".service.NtfyService$AutoRestartReceiver"
