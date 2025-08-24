@@ -1,8 +1,10 @@
 package com.wiptitle.ntfy_webapp_android
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.http.SslError
 import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -110,6 +112,16 @@ class MainActivity : AppCompatActivity() {
                         handleWebAppError("Failed to load WebApp")
                     }
                 }
+            }
+
+            // Used on trusted webapp
+            @SuppressLint("WebViewClientOnReceivedSslError")
+            override fun onReceivedSslError(
+                view: WebView?,
+                handler: SslErrorHandler?,
+                error: SslError?
+            ) {
+                handler?.proceed()
             }
         }
 

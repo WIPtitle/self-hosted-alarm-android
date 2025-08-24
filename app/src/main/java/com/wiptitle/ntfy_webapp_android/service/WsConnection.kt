@@ -1,11 +1,14 @@
 package com.wiptitle.ntfy_webapp_android.service
 
+import android.annotation.SuppressLint
 import android.util.Log
 import com.google.gson.Gson
 import com.wiptitle.ntfy_webapp_android.notification.NotificationData
 import okhttp3.*
 import okio.ByteString
+import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.*
 
 class WsConnection(
     private var baseUrl: String,
@@ -19,15 +22,37 @@ class WsConnection(
     private val onCredentialsNeeded: (callback: (String, String, String?, String?) -> Unit) -> Unit
 ) {
     private var webSocket: WebSocket? = null
-    private val client = OkHttpClient.Builder()
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .pingInterval(30, TimeUnit.SECONDS)
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .build()
+    private val client = createUnsafeOkHttpClient()
     private val gson = Gson()
     private var closed = false
     private var currentLastMessageId: String? = lastMessageId
     private var reconnectAttempts = 0
+
+    private fun createUnsafeOkHttpClient(): OkHttpClient {
+        try {
+            val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+                @SuppressLint("TrustAllX509TrustManager")
+                override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+                @SuppressLint("TrustAllX509TrustManager")
+                override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+            })
+
+            val sslContext = SSLContext.getInstance("SSL")
+            sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+            val sslSocketFactory = sslContext.socketFactory
+
+            return OkHttpClient.Builder()
+                .sslSocketFactory(sslSocketFactory, trustAllCerts[0] as X509TrustManager)
+                .hostnameVerifier { _, _ -> true }
+                .readTimeout(0, TimeUnit.MILLISECONDS)
+                .pingInterval(30, TimeUnit.SECONDS)
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .build()
+        } catch (e: Exception) {
+            throw RuntimeException(e)
+        }
+    }
 
     fun start() {
         if (closed || webSocket != null) return
