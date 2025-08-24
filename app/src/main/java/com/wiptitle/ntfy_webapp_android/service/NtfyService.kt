@@ -99,7 +99,7 @@ class NtfyService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Notification service")
+            .setContentTitle("Self-hosted alarm app")
             .setContentText("Connecting...")
             .setContentIntent(pendingIntent)
             .setSound(null)
@@ -118,7 +118,7 @@ class NtfyService : Service() {
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Notification service")
+            .setContentTitle("Self-hosted alarm app")
             .setContentText(text)
             .setSound(null)
             .setShowWhen(false)
@@ -134,7 +134,7 @@ class NtfyService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID_SERVICE,
-                "Notification Service",
+                "Self-hosted alarm app",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 setShowBadge(false)
