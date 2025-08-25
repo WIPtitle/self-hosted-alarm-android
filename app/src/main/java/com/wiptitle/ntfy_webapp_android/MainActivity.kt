@@ -8,6 +8,9 @@ import android.net.http.SslError
 import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.webkit.*
 import android.widget.Toast
@@ -16,6 +19,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.textfield.TextInputEditText
 import com.wiptitle.ntfy_webapp_android.data.PreferencesManager
 import com.wiptitle.ntfy_webapp_android.network.NtfyConfigFetcher
@@ -31,14 +37,11 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Make fullscreen
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_FULLSCREEN,
-            WindowManager.LayoutParams.FLAG_FULLSCREEN
-        )
-        supportActionBar?.hide()
+        setupInitialFullScreenFlags()
 
         setContentView(R.layout.activity_main)
+
+        completeFullScreenSetup()
 
         prefsManager = PreferencesManager(this)
         ntfyConfigFetcher = NtfyConfigFetcher()
@@ -46,6 +49,9 @@ class MainActivity : AppCompatActivity() {
         setupWebView()
         setupBackPressHandler()
         requestNotificationPermission()
+
+        // Check if we're coming from a notification click
+        val fromNotification = intent.getBooleanExtra("from_notification", false)
 
         // Check if we're coming from an ntfy error
         if (intent.getBooleanExtra("ntfy_error", false)) {
@@ -56,10 +62,73 @@ class MainActivity : AppCompatActivity() {
             if (savedUrl.isNullOrEmpty()) {
                 showUrlInputDialog()
             } else {
-                loadWebApp(savedUrl)
+                // If coming from notification, load notifications page
+                if (fromNotification) {
+                    val notificationsUrl = savedUrl.trimEnd('/') + "/ui/notifications"
+                    loadWebApp(notificationsUrl)
+                } else {
+                    loadWebApp(savedUrl)
+                }
                 // Always fetch fresh credentials on app start
                 fetchNtfyConfigAndConnect(savedUrl)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+
+        // Handle when app is already running and receives a new intent from notification
+        if (intent?.getBooleanExtra("from_notification", false) == true) {
+            val savedUrl = prefsManager.webAppUrl
+            if (!savedUrl.isNullOrEmpty()) {
+                val notificationsUrl = savedUrl.trimEnd('/') + "/ui/notifications"
+                loadWebApp(notificationsUrl)
+            }
+        }
+    }
+
+    private fun setupInitialFullScreenFlags() {
+        supportActionBar?.hide()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+        }
+
+        window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
+
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            @Suppress("DEPRECATION")
+            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        }
+    }
+
+    private fun completeFullScreenSetup() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.let { controller ->
+                controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                controller.systemBarsBehavior =
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    )
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            completeFullScreenSetup()
         }
     }
 

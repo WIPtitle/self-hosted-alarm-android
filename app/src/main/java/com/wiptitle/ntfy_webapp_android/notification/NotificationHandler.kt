@@ -82,13 +82,18 @@ class NotificationHandler(private val context: Context) {
     }
 
     fun showNotification(data: NotificationData) {
+        // Create intent with special flag to indicate we're coming from a notification
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("from_notification", true)
         }
+
+        // Use a unique request code based on notification ID to ensure each notification gets its own PendingIntent
+        val requestCode = data.id.hashCode()
 
         val pendingIntent = PendingIntent.getActivity(
             context,
-            0,
+            requestCode,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -108,7 +113,7 @@ class NotificationHandler(private val context: Context) {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
 
-        notificationManager.notify(data.id.hashCode(), notification)
+        notificationManager.notify(requestCode, notification)
     }
 
     private fun getChannelId(priority: Int?): String {
