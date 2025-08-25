@@ -14,6 +14,7 @@ class PreferencesManager(context: Context) {
         private const val KEY_NTFY_USERNAME = "ntfy_username"
         private const val KEY_NTFY_PASSWORD = "ntfy_password"
         private const val KEY_LAST_MESSAGE_ID = "last_message_id"
+        private const val KEY_NTFY_CONNECTED = "ntfy_connected"
     }
 
     var webAppUrl: String?
@@ -40,8 +41,23 @@ class PreferencesManager(context: Context) {
         get() = prefs.getString(KEY_LAST_MESSAGE_ID, null)
         set(value) = prefs.edit().putString(KEY_LAST_MESSAGE_ID, value).apply()
 
+    var isNtfyConnected: Boolean
+        get() = prefs.getBoolean(KEY_NTFY_CONNECTED, false)
+        set(value) = prefs.edit().putBoolean(KEY_NTFY_CONNECTED, value).apply()
+
     fun isNtfyConfigured(): Boolean {
         return ntfyUrl.isNotEmpty() && ntfyTopic.isNotEmpty()
+    }
+
+    fun clearNtfyConfig() {
+        prefs.edit()
+            .remove(KEY_NTFY_URL)
+            .remove(KEY_NTFY_TOPIC)
+            .remove(KEY_NTFY_USERNAME)
+            .remove(KEY_NTFY_PASSWORD)
+            .remove(KEY_LAST_MESSAGE_ID)
+            .remove(KEY_NTFY_CONNECTED)
+            .apply()
     }
 
     fun clearNtfyLastMessage() {

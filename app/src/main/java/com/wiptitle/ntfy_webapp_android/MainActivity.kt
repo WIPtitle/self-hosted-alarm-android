@@ -9,9 +9,6 @@ import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
-import android.view.WindowInsets
-import android.view.WindowInsetsController
-import android.view.WindowManager
 import android.webkit.*
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -19,9 +16,6 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.textfield.TextInputEditText
 import com.wiptitle.ntfy_webapp_android.data.PreferencesManager
 import com.wiptitle.ntfy_webapp_android.network.NtfyConfigFetcher
@@ -33,15 +27,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefsManager: PreferencesManager
     private lateinit var ntfyConfigFetcher: NtfyConfigFetcher
     private var urlDialog: AlertDialog? = null
+    private var isInitialLoad = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        setupInitialFullScreenFlags()
-
+        setupStatusBar()
         setContentView(R.layout.activity_main)
-
-        completeFullScreenSetup()
 
         prefsManager = PreferencesManager(this)
         ntfyConfigFetcher = NtfyConfigFetcher()
@@ -50,35 +42,32 @@ class MainActivity : AppCompatActivity() {
         setupBackPressHandler()
         requestNotificationPermission()
 
-        // Check if we're coming from a notification click
         val fromNotification = intent.getBooleanExtra("from_notification", false)
 
-        // Check if we're coming from an ntfy error
         if (intent.getBooleanExtra("ntfy_error", false)) {
             handleNtfyDisconnection()
         } else {
-            // Check if we have a saved URL
             val savedUrl = prefsManager.webAppUrl
             if (savedUrl.isNullOrEmpty()) {
                 showUrlInputDialog()
             } else {
-                // If coming from notification, load notifications page
                 if (fromNotification) {
                     val notificationsUrl = savedUrl.trimEnd('/') + "/ui/notifications"
                     loadWebApp(notificationsUrl)
                 } else {
                     loadWebApp(savedUrl)
                 }
-                // Always fetch fresh credentials on app start
-                fetchNtfyConfigAndConnect(savedUrl)
+                if (isInitialLoad && !isServiceConnected()) {
+                    fetchNtfyConfigAndConnect(savedUrl)
+                }
             }
         }
+        isInitialLoad = false
     }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
 
-        // Handle when app is already running and receives a new intent from notification
         if (intent?.getBooleanExtra("from_notification", false) == true) {
             val savedUrl = prefsManager.webAppUrl
             if (!savedUrl.isNullOrEmpty()) {
@@ -88,50 +77,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupInitialFullScreenFlags() {
+    private fun setupStatusBar() {
         supportActionBar?.hide()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            window.statusBarColor = ContextCompat.getColor(this, R.color.webapp_background)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            window.statusBarColor = ContextCompat.getColor(this, R.color.webapp_background)
         }
 
-        window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
-
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            @Suppress("DEPRECATION")
-            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            window.navigationBarColor = ContextCompat.getColor(this, R.color.webapp_background)
         }
     }
 
-    private fun completeFullScreenSetup() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.insetsController?.let { controller ->
-                controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-                controller.systemBarsBehavior =
-                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = (
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                            or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            or View.SYSTEM_UI_FLAG_FULLSCREEN
-                    )
-        }
+    private fun isServiceConnected(): Boolean {
+        return prefsManager.isNtfyConnected
     }
 
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) {
-            completeFullScreenSetup()
-        }
-    }
-
+    @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         webView = findViewById(R.id.webView)
 
@@ -144,6 +109,11 @@ class MainActivity : AppCompatActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             allowUniversalAccessFromFileURLs = true
+
+            // Additional settings for SSL
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            }
         }
 
         webView.webViewClient = object : WebViewClient() {
@@ -158,7 +128,6 @@ class MainActivity : AppCompatActivity() {
             ) {
                 super.onReceivedHttpError(view, request, errorResponse)
 
-                // Check if this is the main frame and we got a 4xx or 5xx error
                 if (request?.isForMainFrame == true) {
                     val statusCode = errorResponse?.statusCode ?: 0
                     if (statusCode in 400..599) {
@@ -183,20 +152,24 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // Used on trusted webapp
             @SuppressLint("WebViewClientOnReceivedSslError")
             override fun onReceivedSslError(
                 view: WebView?,
                 handler: SslErrorHandler?,
                 error: SslError?
             ) {
+                // Accept all SSL certificates for self-signed certificates
                 handler?.proceed()
             }
         }
 
         webView.webChromeClient = WebChromeClient()
 
-        // Initially load blank page
+        // Clear any SSL preferences that might be cached
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+        }
+
         webView.loadUrl("about:blank")
     }
 
@@ -206,7 +179,6 @@ class MainActivity : AppCompatActivity() {
                 if (webView.canGoBack()) {
                     webView.goBack()
                 } else {
-                    // If we can't go back in WebView, let the system handle it
                     isEnabled = false
                     onBackPressedDispatcher.onBackPressed()
                 }
@@ -220,7 +192,6 @@ class MainActivity : AppCompatActivity() {
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_url_input, null)
         val urlInput = dialogView.findViewById<TextInputEditText>(R.id.url_input)
 
-        // Pre-fill with saved URL if exists
         prefsManager.webAppUrl?.let { urlInput.setText(it) }
 
         urlDialog = AlertDialog.Builder(this)
@@ -241,17 +212,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processUrl(url: String) {
-        // Save the URL
+        stopNtfyService()
+
+        prefsManager.clearNtfyConfig()
         prefsManager.webAppUrl = url
 
-        // Load the webapp
         loadWebApp(url)
-
-        // Fetch ntfy config and start service
         fetchNtfyConfigAndConnect(url)
     }
 
     private fun loadWebApp(url: String) {
+        webView.clearCache(true)
+        webView.clearHistory()
+        webView.clearSslPreferences()
         webView.loadUrl(url)
     }
 
@@ -260,17 +233,14 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (config != null) {
                     try {
-                        // Extract domain from URL
                         val url = URL(webAppUrl)
                         val ntfyUrl = "${url.protocol}://${url.authority}"
 
-                        // Save ntfy configuration
                         prefsManager.ntfyUrl = ntfyUrl
                         prefsManager.ntfyTopic = config.topic
                         prefsManager.ntfyUsername = config.user
                         prefsManager.ntfyPassword = config.password
 
-                        // Restart ntfy service with new credentials
                         restartNtfyService()
                     } catch (e: Exception) {
                         Toast.makeText(this, "Failed to configure notifications", Toast.LENGTH_SHORT).show()
@@ -286,6 +256,8 @@ class MainActivity : AppCompatActivity() {
     private fun handleWebAppError(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
         webView.loadUrl("about:blank")
+        stopNtfyService()
+        prefsManager.clearNtfyConfig()
         showUrlInputDialog()
     }
 
@@ -294,13 +266,17 @@ class MainActivity : AppCompatActivity() {
             val savedUrl = prefsManager.webAppUrl
             if (!savedUrl.isNullOrEmpty()) {
                 Toast.makeText(this, "Reconnecting notification service...", Toast.LENGTH_SHORT).show()
-                // Re-fetch credentials and reconnect
                 fetchNtfyConfigAndConnect(savedUrl)
             } else {
-                // If no URL saved, show dialog
                 showUrlInputDialog()
             }
         }
+    }
+
+    private fun stopNtfyService() {
+        val intent = Intent(this, NtfyService::class.java)
+        intent.action = NtfyService.ACTION_STOP
+        startService(intent)
     }
 
     private fun restartNtfyService() {

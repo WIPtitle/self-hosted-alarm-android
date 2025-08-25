@@ -4,7 +4,7 @@ This android project is a fork of the more generic [webapp-wrapper-android](http
 
 It consist of a simple fullscreen webview used to access the self-hosted alarm service webapp on a dedicated app instead of
 opening a tab in a browser; it also automatically fetches Ntfy credentials and opens a websocket to the correct Ntfy server
-to receive and show real time push notifications without having to rely on a not self-hosted solution.
+to receive and show real-time push notifications without having to rely on a not self-hosted solution.
 
 ## Installation
 
@@ -19,3 +19,5 @@ Confirm it, and if everything is reachable and correctly configured you should n
 notifications served by Ntfy.
 
 There is an always-on notification used to keep the connection open, you can manually hide it without losing the connection.
+
+Remove power saving for the app, as well as other settings that limit the background execution (you will not be able to receive real-time notifications).

@@ -73,6 +73,7 @@ class NtfyService : Service() {
             },
             onStateChange = { state ->
                 updateForegroundNotification(state)
+                prefsManager.isNtfyConnected = (state == WsConnection.ConnectionState.CONNECTED)
             },
             onLastMessageIdUpdate = { messageId ->
                 prefsManager.lastMessageId = messageId
@@ -116,6 +117,7 @@ class NtfyService : Service() {
 
     private fun stopConnection() {
         isServiceStarted = false
+        prefsManager.isNtfyConnected = false
         wsConnection?.close()
         wsConnection = null
         stopForeground(true)
@@ -125,6 +127,7 @@ class NtfyService : Service() {
     private fun restartConnection() {
         wsConnection?.close()
         wsConnection = null
+        prefsManager.isNtfyConnected = false
         startConnection()
     }
 
@@ -142,7 +145,7 @@ class NtfyService : Service() {
             .setContentTitle("Home alarm system")
             .setContentText("Connecting...")
             .setContentIntent(pendingIntent)
-            .setSound(null)
+            .setSilent(true)
             .setShowWhen(false)
             .setOngoing(true)
             .setGroup(NOTIFICATION_GROUP_ID)
@@ -160,7 +163,7 @@ class NtfyService : Service() {
             .setSmallIcon(R.drawable.notification_icon)
             .setContentTitle("Home alarm system")
             .setContentText(text)
-            .setSound(null)
+            .setSilent(true)
             .setShowWhen(false)
             .setOngoing(true)
             .setGroup(NOTIFICATION_GROUP_ID)
@@ -178,6 +181,8 @@ class NtfyService : Service() {
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
                 description = "Keeps connection alive for instant notifications"
             }
             val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -200,6 +205,7 @@ class NtfyService : Service() {
             sendBroadcast(intent)
         }
 
+        prefsManager.isNtfyConnected = false
         wsConnection?.close()
         wakeLock?.release()
         super.onDestroy()
