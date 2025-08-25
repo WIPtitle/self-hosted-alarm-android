@@ -10,6 +10,7 @@ import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.wiptitle.ntfy_webapp_android.MainActivity
+import com.wiptitle.ntfy_webapp_android.R
 
 data class NotificationData(
     val id: String,
@@ -97,7 +98,7 @@ class NotificationHandler(private val context: Context) {
         val priority = mapPriority(data.priority)
 
         val notification = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.notification_icon)
             .setContentTitle(title)
             .setContentText(data.message)
             .setPriority(priority)

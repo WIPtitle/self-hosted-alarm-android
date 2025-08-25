@@ -12,6 +12,7 @@ import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.wiptitle.ntfy_webapp_android.MainActivity
+import com.wiptitle.ntfy_webapp_android.R
 import com.wiptitle.ntfy_webapp_android.data.PreferencesManager
 import com.wiptitle.ntfy_webapp_android.network.NtfyConfigFetcher
 import com.wiptitle.ntfy_webapp_android.notification.NotificationHandler
@@ -137,7 +138,7 @@ class NtfyService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.notification_icon)
             .setContentTitle("Home alarm system")
             .setContentText("Connecting...")
             .setContentIntent(pendingIntent)
@@ -156,7 +157,7 @@ class NtfyService : Service() {
         }
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.notification_icon)
             .setContentTitle("Home alarm system")
             .setContentText(text)
             .setSound(null)
