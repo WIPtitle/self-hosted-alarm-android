@@ -98,6 +98,7 @@ class WsConnection(
                     }
                     callback(lastId)
                 } else {
+                    Log.e(TAG, "Poll failed with code: ${response.code}")
                     callback(null)
                 }
             } catch (e: Exception) {

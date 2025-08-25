@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.net.http.SslError
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.webkit.*
@@ -110,7 +112,6 @@ class MainActivity : AppCompatActivity() {
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             allowUniversalAccessFromFileURLs = true
 
-            // Additional settings for SSL
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             }
@@ -158,14 +159,12 @@ class MainActivity : AppCompatActivity() {
                 handler: SslErrorHandler?,
                 error: SslError?
             ) {
-                // Accept all SSL certificates for self-signed certificates
                 handler?.proceed()
             }
         }
 
         webView.webChromeClient = WebChromeClient()
 
-        // Clear any SSL preferences that might be cached
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
         }
@@ -212,7 +211,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processUrl(url: String) {
-        stopNtfyService()
+        // Stop service only if it's configured
+        if (prefsManager.isNtfyConfigured()) {
+            stopNtfyService()
+        }
 
         prefsManager.clearNtfyConfig()
         prefsManager.webAppUrl = url
@@ -241,7 +243,10 @@ class MainActivity : AppCompatActivity() {
                         prefsManager.ntfyUsername = config.user
                         prefsManager.ntfyPassword = config.password
 
-                        restartNtfyService()
+                        // Small delay to ensure preferences are written
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            startNtfyService()
+                        }, 100)
                     } catch (e: Exception) {
                         Toast.makeText(this, "Failed to configure notifications", Toast.LENGTH_SHORT).show()
                         e.printStackTrace()
@@ -277,6 +282,12 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, NtfyService::class.java)
         intent.action = NtfyService.ACTION_STOP
         startService(intent)
+    }
+
+    private fun startNtfyService() {
+        val intent = Intent(this, NtfyService::class.java)
+        intent.action = NtfyService.ACTION_START
+        ContextCompat.startForegroundService(this, intent)
     }
 
     private fun restartNtfyService() {
