@@ -17,6 +17,7 @@ import com.wiptitle.ntfy_webapp_android.R
 import com.wiptitle.ntfy_webapp_android.data.PreferencesManager
 import com.wiptitle.ntfy_webapp_android.network.NtfyConfigFetcher
 import com.wiptitle.ntfy_webapp_android.notification.NotificationHandler
+import java.util.concurrent.atomic.AtomicBoolean
 
 class NtfyService : Service() {
     private lateinit var prefsManager: PreferencesManager
@@ -24,7 +25,7 @@ class NtfyService : Service() {
     private lateinit var configFetcher: NtfyConfigFetcher
     private var wsConnection: WsConnection? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private var isServiceStarted = false
+    private val isServiceStarted = AtomicBoolean(false)
 
     companion object {
         private const val TAG = "NtfyService"
@@ -34,7 +35,7 @@ class NtfyService : Service() {
         const val ACTION_ENSURE_RUNNING = "ENSURE_RUNNING"
         private const val NOTIFICATION_ID = 2586
         private const val CHANNEL_ID_SERVICE = "ntfy_service_channel"
-        private const val NOTIFICATION_GROUP_ID = "com.wiptitle.ntfy_webapp_android.NOTIFICATION_GROUP_SERVICE"
+        private const val WAKE_LOCK_TAG = "NtfyService::lock"
     }
 
     override fun onCreate() {
@@ -46,8 +47,58 @@ class NtfyService : Service() {
         configFetcher = NtfyConfigFetcher()
 
         acquireWakeLock()
+        startForegroundService()
+    }
 
-        val notification = createForegroundNotification()
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "onStartCommand action: ${intent?.action}")
+
+        when (intent?.action) {
+            ACTION_START -> {
+                if (!isServiceStarted.get()) {
+                    startConnection()
+                } else {
+                    Log.d(TAG, "Connection already active, skipping start")
+                }
+            }
+            ACTION_STOP -> stopConnection()
+            ACTION_RESTART -> restartConnection()
+            ACTION_ENSURE_RUNNING -> {
+                if (!isServiceStarted.get() || wsConnection == null) {
+                    Log.d(TAG, "Service not running properly, starting connection")
+                    startConnection()
+                } else {
+                    Log.d(TAG, "Service already running and connected")
+                }
+            }
+            else -> {
+                if (prefsManager.isNtfyConfigured()) {
+                    startConnection()
+                }
+            }
+        }
+
+        return START_STICKY
+    }
+
+    private fun startForegroundService() {
+        createNotificationChannel()
+
+        val intent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
+            .setSmallIcon(R.drawable.notification_icon)
+            .setContentTitle("Home alarm system")
+            .setContentText("Starting...")
+            .setContentIntent(pendingIntent)
+            .setSilent(true)
+            .setShowWhen(false)
+            .setOngoing(true)
+            .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
@@ -58,36 +109,6 @@ class NtfyService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-
-        if (prefsManager.isNtfyConfigured()) {
-            startConnection()
-        }
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand action: ${intent?.action}")
-
-        when (intent?.action) {
-            ACTION_START -> {
-                if (wsConnection == null || !isServiceStarted) {
-                    startConnection()
-                } else {
-                    Log.d(TAG, "Connection already active, skipping start")
-                }
-            }
-            ACTION_STOP -> stopConnection()
-            ACTION_RESTART -> restartConnection()
-            ACTION_ENSURE_RUNNING -> {
-                if (!isServiceStarted || wsConnection == null) {
-                    Log.d(TAG, "Service not running properly, starting connection")
-                    startConnection()
-                } else {
-                    Log.d(TAG, "Service already running and connected")
-                }
-            }
-        }
-
-        return START_STICKY
     }
 
     private fun startConnection() {
@@ -97,7 +118,7 @@ class NtfyService : Service() {
         }
 
         Log.d(TAG, "Starting connection...")
-        isServiceStarted = true
+        isServiceStarted.set(true)
 
         wsConnection?.close()
 
@@ -157,41 +178,16 @@ class NtfyService : Service() {
 
     private fun stopConnection() {
         Log.d(TAG, "Stopping connection...")
-        isServiceStarted = false
+        isServiceStarted.set(false)
         prefsManager.isNtfyConnected = false
         wsConnection?.close()
         wsConnection = null
-        stopForeground(true)
-        stopSelf()
     }
 
     private fun restartConnection() {
         Log.d(TAG, "Restarting connection...")
-        wsConnection?.close()
-        wsConnection = null
-        prefsManager.isNtfyConnected = false
+        stopConnection()
         startConnection()
-    }
-
-    private fun createForegroundNotification(): Notification {
-        createNotificationChannel()
-
-        val intent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        return NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
-            .setSmallIcon(R.drawable.notification_icon)
-            .setContentTitle("Home alarm system")
-            .setContentText("Starting...")
-            .setContentIntent(pendingIntent)
-            .setSilent(true)
-            .setShowWhen(false)
-            .setOngoing(true)
-            .setGroup(NOTIFICATION_GROUP_ID)
-            .build()
     }
 
     private fun updateForegroundNotification(state: WsConnection.ConnectionState) {
@@ -201,14 +197,20 @@ class NtfyService : Service() {
             WsConnection.ConnectionState.DISCONNECTED -> "Reconnecting..."
         }
 
+        val intent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
             .setSmallIcon(R.drawable.notification_icon)
             .setContentTitle("Home alarm system")
             .setContentText(text)
+            .setContentIntent(pendingIntent)
             .setSilent(true)
             .setShowWhen(false)
             .setOngoing(true)
-            .setGroup(NOTIFICATION_GROUP_ID)
             .build()
 
         val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -236,16 +238,57 @@ class NtfyService : Service() {
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
-            "NtfyService::WakeLock"
-        )
-        wakeLock?.acquire()
+            WAKE_LOCK_TAG
+        ).apply {
+            acquire(10*60*1000L)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                }
+            }
+            wakeLock = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to release wake lock", e)
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.d(TAG, "onTaskRemoved - App task was removed")
+        super.onTaskRemoved(rootIntent)
+
+        if (prefsManager.isNtfyConfigured()) {
+            val restartServiceIntent = Intent(applicationContext, NtfyService::class.java).also {
+                it.setPackage(packageName)
+                it.action = ACTION_START
+            }
+
+            val restartServicePendingIntent = PendingIntent.getService(
+                this, 1, restartServiceIntent,
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val alarmService = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            alarmService.set(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + 1000,
+                restartServicePendingIntent
+            )
+        }
     }
 
     override fun onDestroy() {
         Log.d(TAG, "onDestroy - Service is being destroyed!")
 
-        if (isServiceStarted && prefsManager.isNtfyConfigured()) {
+        if (isServiceStarted.get() && prefsManager.isNtfyConfigured()) {
             Log.d(TAG, "Scheduling automatic restart...")
+
+            val broadcastIntent = Intent(this, AutoRestartReceiver::class.java)
+            sendBroadcast(broadcastIntent)
 
             val restartServiceIntent = Intent(applicationContext, NtfyService::class.java).also {
                 it.setPackage(packageName)
@@ -263,53 +306,15 @@ class NtfyService : Service() {
                 SystemClock.elapsedRealtime() + 1000,
                 restartServicePendingIntent
             )
-
-            val intent = Intent(this, AutoRestartReceiver::class.java)
-            sendBroadcast(intent)
         }
 
         prefsManager.isNtfyConnected = false
         wsConnection?.close()
-        wakeLock?.release()
+        wsConnection = null
+        releaseWakeLock()
+        stopForeground(true)
         super.onDestroy()
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        Log.d(TAG, "onTaskRemoved - App task was removed")
-
-        if (prefsManager.isNtfyConfigured()) {
-            val restartServiceIntent = Intent(applicationContext, NtfyService::class.java).also {
-                it.setPackage(packageName)
-                it.action = ACTION_RESTART
-            }
-
-            val restartServicePendingIntent = PendingIntent.getService(
-                this, 1, restartServiceIntent,
-                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val alarmService = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            alarmService.set(
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime() + 1000,
-                restartServicePendingIntent
-            )
-        }
-        super.onTaskRemoved(rootIntent)
-    }
-
     override fun onBind(intent: Intent?): IBinder? = null
-
-    class AutoRestartReceiver : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            Log.d(TAG, "AutoRestartReceiver triggered")
-            val prefsManager = PreferencesManager(context)
-            if (prefsManager.isNtfyConfigured()) {
-                val serviceIntent = Intent(context, NtfyService::class.java).apply {
-                    action = ACTION_START
-                }
-                ContextCompat.startForegroundService(context, serviceIntent)
-            }
-        }
-    }
 }

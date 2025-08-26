@@ -15,6 +15,7 @@ class PreferencesManager(context: Context) {
         private const val KEY_NTFY_PASSWORD = "ntfy_password"
         private const val KEY_LAST_MESSAGE_ID = "last_message_id"
         private const val KEY_NTFY_CONNECTED = "ntfy_connected"
+        private const val KEY_AUTO_RESTART_WORKER_VERSION = "auto_restart_worker_version"
     }
 
     var webAppUrl: String?
@@ -44,6 +45,16 @@ class PreferencesManager(context: Context) {
     var isNtfyConnected: Boolean
         get() = prefs.getBoolean(KEY_NTFY_CONNECTED, false)
         set(value) = prefs.edit().putBoolean(KEY_NTFY_CONNECTED, value).apply()
+
+    fun getAutoRestartWorkerVersion(): Int {
+        return prefs.getInt(KEY_AUTO_RESTART_WORKER_VERSION, 0)
+    }
+
+    fun setAutoRestartWorkerVersion(version: Int) {
+        prefs.edit()
+            .putInt(KEY_AUTO_RESTART_WORKER_VERSION, version)
+            .apply()
+    }
 
     fun isNtfyConfigured(): Boolean {
         return ntfyUrl.isNotEmpty() && ntfyTopic.isNotEmpty()

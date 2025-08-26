@@ -8,6 +8,7 @@ import okhttp3.*
 import okio.ByteString
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.*
 
 class WsConnection(
@@ -24,7 +25,8 @@ class WsConnection(
     private var webSocket: WebSocket? = null
     private val client = createUnsafeOkHttpClient()
     private val gson = Gson()
-    private var closed = false
+    private val closed = AtomicBoolean(false)
+    private val connected = AtomicBoolean(false)
     private var currentLastMessageId: String? = lastMessageId
     private var reconnectAttempts = 0
 
@@ -55,7 +57,13 @@ class WsConnection(
     }
 
     fun start() {
-        if (closed || webSocket != null) return
+        if (closed.get() || connected.get()) {
+            Log.d(TAG, "Not starting: closed=${closed.get()}, connected=${connected.get()}")
+            return
+        }
+
+        webSocket?.close(1000, "Reconnecting")
+        webSocket = null
 
         if (currentLastMessageId == null) {
             pollForLastMessageId { lastId ->
@@ -68,6 +76,10 @@ class WsConnection(
         } else {
             connectWebSocket()
         }
+    }
+
+    fun isConnected(): Boolean {
+        return connected.get()
     }
 
     private fun pollForLastMessageId(callback: (String?) -> Unit) {
@@ -109,6 +121,11 @@ class WsConnection(
     }
 
     private fun connectWebSocket() {
+        if (closed.get() || connected.get()) {
+            Log.d(TAG, "Not connecting WebSocket: closed=${closed.get()}, connected=${connected.get()}")
+            return
+        }
+
         val sinceParam = currentLastMessageId ?: "none"
         val wsUrl = baseUrl.replace("http://", "ws://")
             .replace("https://", "wss://")
@@ -137,7 +154,9 @@ class WsConnection(
     }
 
     fun close() {
-        closed = true
+        Log.d(TAG, "Closing connection")
+        closed.set(true)
+        connected.set(false)
         webSocket?.close(1000, "User closed")
         webSocket = null
         onStateChange(ConnectionState.DISCONNECTED)
@@ -146,6 +165,7 @@ class WsConnection(
     private inner class WebSocketListener : okhttp3.WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             Log.d(TAG, "WebSocket connected successfully")
+            connected.set(true)
             reconnectAttempts = 0
             onStateChange(ConnectionState.CONNECTED)
         }
@@ -183,36 +203,41 @@ class WsConnection(
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             Log.d(TAG, "WebSocket closed: $code $reason")
+            connected.set(false)
             onStateChange(ConnectionState.DISCONNECTED)
-            this@WsConnection.webSocket = null
             attemptReconnect()
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             Log.e(TAG, "WebSocket failure - Code: ${response?.code}", t)
+            connected.set(false)
             onStateChange(ConnectionState.DISCONNECTED)
-            this@WsConnection.webSocket = null
             attemptReconnect()
         }
     }
 
     private fun attemptReconnect() {
-        if (!closed) {
-            reconnectAttempts++
+        if (closed.get()) {
+            Log.d(TAG, "Not reconnecting, connection is closed")
+            return
+        }
 
-            Log.d(TAG, "Requesting fresh credentials before reconnect attempt $reconnectAttempts")
-            onCredentialsNeeded { newBaseUrl, newTopic, newUsername, newPassword ->
-                if (!closed) {
-                    updateCredentials(newBaseUrl, newTopic, newUsername, newPassword)
+        connected.set(false)
+        webSocket = null
+        reconnectAttempts++
 
-                    val delay = minOf(2000L * reconnectAttempts, 30000L)
-                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        if (!closed && webSocket == null) {
-                            Log.d(TAG, "Reconnecting with fresh credentials (attempt $reconnectAttempts)")
-                            connectWebSocket()
-                        }
-                    }, delay)
-                }
+        Log.d(TAG, "Requesting fresh credentials before reconnect attempt $reconnectAttempts")
+        onCredentialsNeeded { newBaseUrl, newTopic, newUsername, newPassword ->
+            if (!closed.get()) {
+                updateCredentials(newBaseUrl, newTopic, newUsername, newPassword)
+
+                val delay = minOf(2000L * reconnectAttempts, 30000L)
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (!closed.get() && !connected.get()) {
+                        Log.d(TAG, "Reconnecting with fresh credentials (attempt $reconnectAttempts)")
+                        start()
+                    }
+                }, delay)
             }
         }
     }

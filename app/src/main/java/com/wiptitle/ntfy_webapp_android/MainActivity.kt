@@ -19,11 +19,14 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.work.*
 import com.google.android.material.textfield.TextInputEditText
 import com.wiptitle.ntfy_webapp_android.data.PreferencesManager
 import com.wiptitle.ntfy_webapp_android.network.NtfyConfigFetcher
-import com.wiptitle.ntfy_webapp_android.service.NtfyService
+import com.wiptitle.ntfy_webapp_android.service.SubscriberService
+import com.wiptitle.ntfy_webapp_android.service.SubscriberServiceManager
 import java.net.URL
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
@@ -42,7 +45,6 @@ class MainActivity : AppCompatActivity() {
 
         Log.d(TAG, "onCreate started")
 
-        // Clear SSL preferences before anything else
         try {
             CookieManager.getInstance().removeAllCookies(null)
             CookieManager.getInstance().flush()
@@ -59,7 +61,7 @@ class MainActivity : AppCompatActivity() {
         prefsManager = PreferencesManager(this)
         ntfyConfigFetcher = NtfyConfigFetcher()
 
-        ensureServiceRunning()
+        schedulePeriodicWorker()
 
         setupWebView()
         setupBackPressHandler()
@@ -90,20 +92,11 @@ class MainActivity : AppCompatActivity() {
         }, 500)
     }
 
-    private fun ensureServiceRunning() {
-        if (prefsManager.isNtfyConfigured()) {
-            Log.d(TAG, "Ensuring service is running...")
-            val intent = Intent(this, NtfyService::class.java)
-            intent.action = NtfyService.ACTION_ENSURE_RUNNING
-            ContextCompat.startForegroundService(this, intent)
-        }
-    }
-
     override fun onResume() {
         super.onResume()
         webView.onResume()
         webView.resumeTimers()
-        ensureServiceRunning()
+        SubscriberServiceManager.refresh(this)
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -116,6 +109,34 @@ class MainActivity : AppCompatActivity() {
                 loadWebApp(notificationsUrl)
             }
         }
+    }
+
+    private fun schedulePeriodicWorker() {
+        val workerVersion = prefsManager.getAutoRestartWorkerVersion()
+        val workPolicy = if (workerVersion == SubscriberService.SERVICE_START_WORKER_VERSION) {
+            ExistingPeriodicWorkPolicy.KEEP
+        } else {
+            prefsManager.setAutoRestartWorkerVersion(SubscriberService.SERVICE_START_WORKER_VERSION)
+            ExistingPeriodicWorkPolicy.REPLACE
+        }
+
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val work = PeriodicWorkRequestBuilder<SubscriberServiceManager.ServiceStartWorker>(
+            repeatInterval = 6, TimeUnit.HOURS
+        )
+            .setConstraints(constraints)
+            .addTag(SubscriberService.SERVICE_START_WORKER_WORK_NAME_PERIODIC)
+            .build()
+
+        val workManager = WorkManager.getInstance(this)
+        workManager.enqueueUniquePeriodicWork(
+            SubscriberService.SERVICE_START_WORKER_WORK_NAME_PERIODIC,
+            workPolicy,
+            work
+        )
     }
 
     private fun setupStatusBar() {
@@ -295,10 +316,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processUrl(url: String) {
-        if (prefsManager.isNtfyConfigured()) {
-            stopNtfyService()
-        }
-
         prefsManager.clearNtfyConfig()
         prefsManager.webAppUrl = url
 
@@ -329,7 +346,7 @@ class MainActivity : AppCompatActivity() {
                         prefsManager.ntfyPassword = config.password
 
                         Handler(Looper.getMainLooper()).postDelayed({
-                            startNtfyService()
+                            SubscriberServiceManager.refresh(this)
                         }, 100)
                     } catch (e: Exception) {
                         Toast.makeText(this, "Failed to configure notifications", Toast.LENGTH_SHORT).show()
@@ -345,8 +362,8 @@ class MainActivity : AppCompatActivity() {
     private fun handleWebAppError(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
         webView.loadUrl("about:blank")
-        stopNtfyService()
         prefsManager.clearNtfyConfig()
+        SubscriberServiceManager.refresh(this)
         showUrlInputDialog()
     }
 
@@ -360,18 +377,6 @@ class MainActivity : AppCompatActivity() {
                 showUrlInputDialog()
             }
         }
-    }
-
-    private fun stopNtfyService() {
-        val intent = Intent(this, NtfyService::class.java)
-        intent.action = NtfyService.ACTION_STOP
-        startService(intent)
-    }
-
-    private fun startNtfyService() {
-        val intent = Intent(this, NtfyService::class.java)
-        intent.action = NtfyService.ACTION_START
-        ContextCompat.startForegroundService(this, intent)
     }
 
     private fun requestNotificationPermission() {

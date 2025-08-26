@@ -31,19 +31,13 @@
         </activity>
 
         <service
-            android:name=".service.NtfyService"
+            android:name=".service.SubscriberService"
             android:foregroundServiceType="specialUse"
             android:stopWithTask="false"
-            android:exported="false"
-            android:process=":remote" />
-
-        <receiver
-            android:name=".service.NtfyService$AutoRestartReceiver"
-            android:enabled="true"
             android:exported="false" />
 
         <receiver
-            android:name=".service.BootReceiver"
+            android:name=".service.SubscriberService$BootStartReceiver"
             android:enabled="true"
             android:exported="true"
             android:directBootAware="true">
@@ -53,6 +47,11 @@
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".service.SubscriberService$AutoRestartReceiver"
+            android:enabled="true"
+            android:exported="false" />
 
         <property
             android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
