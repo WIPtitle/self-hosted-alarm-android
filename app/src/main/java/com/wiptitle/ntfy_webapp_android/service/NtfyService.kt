@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.wiptitle.ntfy_webapp_android.MainActivity
@@ -25,8 +26,21 @@ class NtfyService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var isServiceStarted = false
 
+    companion object {
+        private const val TAG = "NtfyService"
+        const val ACTION_START = "START"
+        const val ACTION_STOP = "STOP"
+        const val ACTION_RESTART = "RESTART"
+        const val ACTION_ENSURE_RUNNING = "ENSURE_RUNNING"
+        private const val NOTIFICATION_ID = 2586
+        private const val CHANNEL_ID_SERVICE = "ntfy_service_channel"
+        private const val NOTIFICATION_GROUP_ID = "com.wiptitle.ntfy_webapp_android.NOTIFICATION_GROUP_SERVICE"
+    }
+
     override fun onCreate() {
         super.onCreate()
+        Log.d(TAG, "Service onCreate")
+
         prefsManager = PreferencesManager(this)
         notificationHandler = NotificationHandler(this)
         configFetcher = NtfyConfigFetcher()
@@ -44,20 +58,45 @@ class NtfyService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+
+        if (prefsManager.isNtfyConfigured()) {
+            startConnection()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "onStartCommand action: ${intent?.action}")
+
         when (intent?.action) {
-            ACTION_START -> startConnection()
+            ACTION_START -> {
+                if (wsConnection == null || !isServiceStarted) {
+                    startConnection()
+                } else {
+                    Log.d(TAG, "Connection already active, skipping start")
+                }
+            }
             ACTION_STOP -> stopConnection()
             ACTION_RESTART -> restartConnection()
+            ACTION_ENSURE_RUNNING -> {
+                if (!isServiceStarted || wsConnection == null) {
+                    Log.d(TAG, "Service not running properly, starting connection")
+                    startConnection()
+                } else {
+                    Log.d(TAG, "Service already running and connected")
+                }
+            }
         }
+
         return START_STICKY
     }
 
     private fun startConnection() {
-        if (!prefsManager.isNtfyConfigured()) return
+        if (!prefsManager.isNtfyConfigured()) {
+            Log.w(TAG, "Cannot start connection - not configured")
+            return
+        }
 
+        Log.d(TAG, "Starting connection...")
         isServiceStarted = true
 
         wsConnection?.close()
@@ -72,6 +111,7 @@ class NtfyService : Service() {
                 notificationHandler.showNotification(notification)
             },
             onStateChange = { state ->
+                Log.d(TAG, "Connection state changed: $state")
                 updateForegroundNotification(state)
                 prefsManager.isNtfyConnected = (state == WsConnection.ConnectionState.CONNECTED)
             },
@@ -116,6 +156,7 @@ class NtfyService : Service() {
     }
 
     private fun stopConnection() {
+        Log.d(TAG, "Stopping connection...")
         isServiceStarted = false
         prefsManager.isNtfyConnected = false
         wsConnection?.close()
@@ -125,6 +166,7 @@ class NtfyService : Service() {
     }
 
     private fun restartConnection() {
+        Log.d(TAG, "Restarting connection...")
         wsConnection?.close()
         wsConnection = null
         prefsManager.isNtfyConnected = false
@@ -143,7 +185,7 @@ class NtfyService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID_SERVICE)
             .setSmallIcon(R.drawable.notification_icon)
             .setContentTitle("Home alarm system")
-            .setContentText("Connecting...")
+            .setContentText("Starting...")
             .setContentIntent(pendingIntent)
             .setSilent(true)
             .setShowWhen(false)
@@ -200,7 +242,28 @@ class NtfyService : Service() {
     }
 
     override fun onDestroy() {
-        if (isServiceStarted) {
+        Log.d(TAG, "onDestroy - Service is being destroyed!")
+
+        if (isServiceStarted && prefsManager.isNtfyConfigured()) {
+            Log.d(TAG, "Scheduling automatic restart...")
+
+            val restartServiceIntent = Intent(applicationContext, NtfyService::class.java).also {
+                it.setPackage(packageName)
+                it.action = ACTION_START
+            }
+
+            val restartServicePendingIntent = PendingIntent.getService(
+                this, 1, restartServiceIntent,
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val alarmService = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            alarmService.set(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + 1000,
+                restartServicePendingIntent
+            )
+
             val intent = Intent(this, AutoRestartReceiver::class.java)
             sendBroadcast(intent)
         }
@@ -212,6 +275,8 @@ class NtfyService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.d(TAG, "onTaskRemoved - App task was removed")
+
         if (prefsManager.isNtfyConfigured()) {
             val restartServiceIntent = Intent(applicationContext, NtfyService::class.java).also {
                 it.setPackage(packageName)
@@ -225,7 +290,7 @@ class NtfyService : Service() {
 
             val alarmService = getSystemService(Context.ALARM_SERVICE) as AlarmManager
             alarmService.set(
-                AlarmManager.ELAPSED_REALTIME,
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
                 SystemClock.elapsedRealtime() + 1000,
                 restartServicePendingIntent
             )
@@ -237,22 +302,14 @@ class NtfyService : Service() {
 
     class AutoRestartReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            Log.d(TAG, "AutoRestartReceiver triggered")
             val prefsManager = PreferencesManager(context)
             if (prefsManager.isNtfyConfigured()) {
                 val serviceIntent = Intent(context, NtfyService::class.java).apply {
-                    action = ACTION_RESTART
+                    action = ACTION_START
                 }
                 ContextCompat.startForegroundService(context, serviceIntent)
             }
         }
-    }
-
-    companion object {
-        const val ACTION_START = "START"
-        const val ACTION_STOP = "STOP"
-        const val ACTION_RESTART = "RESTART"
-        private const val NOTIFICATION_ID = 2586
-        private const val CHANNEL_ID_SERVICE = "ntfy_service_channel"
-        private const val NOTIFICATION_GROUP_ID = "com.wiptitle.ntfy_webapp_android.NOTIFICATION_GROUP_SERVICE"
     }
 }

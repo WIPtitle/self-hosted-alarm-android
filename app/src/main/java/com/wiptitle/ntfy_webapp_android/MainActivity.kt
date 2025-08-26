@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.webkit.*
@@ -31,8 +32,26 @@ class MainActivity : AppCompatActivity() {
     private var urlDialog: AlertDialog? = null
     private var isInitialLoad = true
 
+    companion object {
+        private const val TAG = "MainActivity"
+        private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 1001
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        Log.d(TAG, "onCreate started")
+
+        // Clear SSL preferences before anything else
+        try {
+            CookieManager.getInstance().removeAllCookies(null)
+            CookieManager.getInstance().flush()
+            WebStorage.getInstance().deleteAllData()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        WebView.clearClientCertPreferences(null)
 
         setupStatusBar()
         setContentView(R.layout.activity_main)
@@ -40,31 +59,51 @@ class MainActivity : AppCompatActivity() {
         prefsManager = PreferencesManager(this)
         ntfyConfigFetcher = NtfyConfigFetcher()
 
+        ensureServiceRunning()
+
         setupWebView()
         setupBackPressHandler()
         requestNotificationPermission()
 
         val fromNotification = intent.getBooleanExtra("from_notification", false)
+        val savedUrl = prefsManager.webAppUrl
 
-        if (intent.getBooleanExtra("ntfy_error", false)) {
-            handleNtfyDisconnection()
-        } else {
-            val savedUrl = prefsManager.webAppUrl
-            if (savedUrl.isNullOrEmpty()) {
-                showUrlInputDialog()
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (intent.getBooleanExtra("ntfy_error", false)) {
+                handleNtfyDisconnection()
             } else {
-                if (fromNotification) {
-                    val notificationsUrl = savedUrl.trimEnd('/') + "/ui/notifications"
-                    loadWebApp(notificationsUrl)
+                if (savedUrl.isNullOrEmpty()) {
+                    showUrlInputDialog()
                 } else {
-                    loadWebApp(savedUrl)
-                }
-                if (isInitialLoad && !isServiceConnected()) {
-                    fetchNtfyConfigAndConnect(savedUrl)
+                    if (fromNotification) {
+                        val notificationsUrl = savedUrl.trimEnd('/') + "/ui/notifications"
+                        loadWebApp(notificationsUrl)
+                    } else {
+                        loadWebApp(savedUrl)
+                    }
+                    if (isInitialLoad && !prefsManager.isNtfyConnected) {
+                        fetchNtfyConfigAndConnect(savedUrl)
+                    }
                 }
             }
+            isInitialLoad = false
+        }, 500)
+    }
+
+    private fun ensureServiceRunning() {
+        if (prefsManager.isNtfyConfigured()) {
+            Log.d(TAG, "Ensuring service is running...")
+            val intent = Intent(this, NtfyService::class.java)
+            intent.action = NtfyService.ACTION_ENSURE_RUNNING
+            ContextCompat.startForegroundService(this, intent)
         }
-        isInitialLoad = false
+    }
+
+    override fun onResume() {
+        super.onResume()
+        webView.onResume()
+        webView.resumeTimers()
+        ensureServiceRunning()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -94,10 +133,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun isServiceConnected(): Boolean {
-        return prefsManager.isNtfyConnected
-    }
-
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         webView = findViewById(R.id.webView)
@@ -108,9 +143,16 @@ class MainActivity : AppCompatActivity() {
             databaseEnabled = true
             allowFileAccess = true
             allowContentAccess = true
-            cacheMode = WebSettings.LOAD_DEFAULT
+            cacheMode = WebSettings.LOAD_NO_CACHE
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             allowUniversalAccessFromFileURLs = true
+            setSupportMultipleWindows(false)
+            useWideViewPort = true
+            loadWithOverviewMode = true
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                safeBrowsingEnabled = false
+            }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
@@ -132,6 +174,7 @@ class MainActivity : AppCompatActivity() {
                 if (request?.isForMainFrame == true) {
                     val statusCode = errorResponse?.statusCode ?: 0
                     if (statusCode in 400..599) {
+                        view?.clearSslPreferences()
                         runOnUiThread {
                             handleWebAppError("WebApp returned error: $statusCode")
                         }
@@ -145,6 +188,8 @@ class MainActivity : AppCompatActivity() {
                 error: WebResourceError?
             ) {
                 super.onReceivedError(view, request, error)
+
+                view?.clearSslPreferences()
 
                 if (request?.isForMainFrame == true) {
                     runOnUiThread {
@@ -161,15 +206,54 @@ class MainActivity : AppCompatActivity() {
             ) {
                 handler?.proceed()
             }
+
+            override fun onReceivedClientCertRequest(
+                view: WebView?,
+                request: ClientCertRequest
+            ) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    request.proceed(null, null)
+                } else {
+                    request.cancel()
+                }
+            }
         }
 
         webView.webChromeClient = WebChromeClient()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+            CookieManager.getInstance().flush()
         }
 
         webView.loadUrl("about:blank")
+    }
+
+    private fun clearWebViewData() {
+        try {
+            webView.clearCache(true)
+            webView.clearHistory()
+            webView.clearSslPreferences()
+            webView.clearFormData()
+
+            val cookieManager = CookieManager.getInstance()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                cookieManager.removeAllCookies(null)
+                cookieManager.flush()
+            } else {
+                cookieManager.removeAllCookie()
+                cookieManager.removeSessionCookie()
+            }
+
+            webView.clearMatches()
+            WebStorage.getInstance().deleteAllData()
+
+            deleteDatabase("webview.db")
+            deleteDatabase("webviewCache.db")
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun setupBackPressHandler() {
@@ -211,7 +295,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processUrl(url: String) {
-        // Stop service only if it's configured
         if (prefsManager.isNtfyConfigured()) {
             stopNtfyService()
         }
@@ -224,13 +307,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadWebApp(url: String) {
-        webView.clearCache(true)
-        webView.clearHistory()
-        webView.clearSslPreferences()
-        webView.loadUrl(url)
+        clearWebViewData()
+
+        Handler(Looper.getMainLooper()).postDelayed({
+            webView.loadUrl(url)
+        }, 200)
     }
 
     fun fetchNtfyConfigAndConnect(webAppUrl: String) {
+        Log.d(TAG, "fetchNtfyConfigAndConnect called with: $webAppUrl")
         ntfyConfigFetcher.fetchConfig(webAppUrl) { config ->
             runOnUiThread {
                 if (config != null) {
@@ -243,7 +328,6 @@ class MainActivity : AppCompatActivity() {
                         prefsManager.ntfyUsername = config.user
                         prefsManager.ntfyPassword = config.password
 
-                        // Small delay to ensure preferences are written
                         Handler(Looper.getMainLooper()).postDelayed({
                             startNtfyService()
                         }, 100)
@@ -290,12 +374,6 @@ class MainActivity : AppCompatActivity() {
         ContextCompat.startForegroundService(this, intent)
     }
 
-    private fun restartNtfyService() {
-        val intent = Intent(this, NtfyService::class.java)
-        intent.action = NtfyService.ACTION_RESTART
-        ContextCompat.startForegroundService(this, intent)
-    }
-
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(
@@ -312,7 +390,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    companion object {
-        private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 1001
+    override fun onPause() {
+        webView.onPause()
+        webView.pauseTimers()
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        webView.clearSslPreferences()
+        webView.clearCache(true)
+        webView.destroy()
+        super.onDestroy()
     }
 }
