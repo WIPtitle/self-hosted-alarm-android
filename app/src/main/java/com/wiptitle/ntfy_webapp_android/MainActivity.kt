@@ -338,6 +338,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initNotifications(webAppUrl: String) {
+        val wasFirebaseMode = prefsManager.isFirebaseMode
+
         Thread {
             val isFirebaseConfigured = firebaseConfigChecker.checkStatus(webAppUrl)
 
@@ -346,6 +348,10 @@ class MainActivity : AppCompatActivity() {
                     Log.d(TAG, "Firebase is configured, switching to FCM")
                     prefsManager.isFirebaseMode = true
                     SubscriberServiceManager.stop(this)
+
+                    if (!wasFirebaseMode) {
+                        Toast.makeText(this, "Firebase notifications configured", Toast.LENGTH_SHORT).show()
+                    }
 
                     FirebaseMessaging.getInstance().token
                         .addOnSuccessListener { token ->
@@ -359,6 +365,11 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     Log.d(TAG, "Firebase not configured, using ntfy")
                     prefsManager.isFirebaseMode = false
+
+                    if (wasFirebaseMode) {
+                        Toast.makeText(this, "Firebase removed, switching to ntfy", Toast.LENGTH_SHORT).show()
+                    }
+
                     fetchNtfyConfigAndConnect(webAppUrl)
                 }
             }
