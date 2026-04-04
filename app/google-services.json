@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "242045882442",
+    "project_id": "home-alarm-cb68a",
+    "storage_bucket": "home-alarm-cb68a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:242045882442:android:9fd4a99b7799ab127256b3",
+        "android_client_info": {
+          "package_name": "com.wiptitle.ntfy_webapp_android"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDcySIAuckpXWSEmgTLVWJi6q1hqtxW1Oc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -21,7 +21,10 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.work.*
 import com.google.android.material.textfield.TextInputEditText
+import com.google.firebase.messaging.FirebaseMessaging
 import com.wiptitle.ntfy_webapp_android.data.PreferencesManager
+import com.wiptitle.ntfy_webapp_android.network.FirebaseConfigChecker
+import com.wiptitle.ntfy_webapp_android.network.FirebaseTokenRegistrar
 import com.wiptitle.ntfy_webapp_android.network.NtfyConfigFetcher
 import com.wiptitle.ntfy_webapp_android.service.SubscriberService
 import com.wiptitle.ntfy_webapp_android.service.SubscriberServiceManager
@@ -32,6 +35,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var prefsManager: PreferencesManager
     private lateinit var ntfyConfigFetcher: NtfyConfigFetcher
+    private val firebaseConfigChecker = FirebaseConfigChecker()
+    private val firebaseTokenRegistrar = FirebaseTokenRegistrar()
     private var urlDialog: AlertDialog? = null
     private var isInitialLoad = true
 
@@ -84,7 +89,7 @@ class MainActivity : AppCompatActivity() {
                         loadWebApp(savedUrl)
                     }
                     if (isInitialLoad && !prefsManager.isNtfyConnected) {
-                        fetchNtfyConfigAndConnect(savedUrl)
+                        initNotifications(savedUrl)
                     }
                 }
             }
@@ -112,6 +117,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun schedulePeriodicWorker() {
+        if (prefsManager.isFirebaseMode) return
         val workerVersion = prefsManager.getAutoRestartWorkerVersion()
         val workPolicy = if (workerVersion == SubscriberService.SERVICE_START_WORKER_VERSION) {
             ExistingPeriodicWorkPolicy.KEEP
@@ -320,7 +326,7 @@ class MainActivity : AppCompatActivity() {
         prefsManager.webAppUrl = url
 
         loadWebApp(url)
-        fetchNtfyConfigAndConnect(url)
+        initNotifications(url)
     }
 
     private fun loadWebApp(url: String) {
@@ -329,6 +335,45 @@ class MainActivity : AppCompatActivity() {
         Handler(Looper.getMainLooper()).postDelayed({
             webView.loadUrl(url)
         }, 200)
+    }
+
+    private fun initNotifications(webAppUrl: String) {
+        val wasFirebaseMode = prefsManager.isFirebaseMode
+
+        Thread {
+            val isFirebaseConfigured = firebaseConfigChecker.checkStatus(webAppUrl)
+
+            runOnUiThread {
+                if (isFirebaseConfigured) {
+                    Log.d(TAG, "Firebase is configured, switching to FCM")
+                    prefsManager.isFirebaseMode = true
+                    SubscriberServiceManager.stop(this)
+
+                    if (!wasFirebaseMode) {
+                        Toast.makeText(this, "Firebase notifications configured", Toast.LENGTH_SHORT).show()
+                    }
+
+                    FirebaseMessaging.getInstance().token
+                        .addOnSuccessListener { token ->
+                            Thread {
+                                firebaseTokenRegistrar.registerToken(token, webAppUrl)
+                            }.start()
+                        }
+                        .addOnFailureListener { e ->
+                            Log.e(TAG, "Failed to get FCM token", e)
+                        }
+                } else {
+                    Log.d(TAG, "Firebase not configured, using ntfy")
+                    prefsManager.isFirebaseMode = false
+
+                    if (wasFirebaseMode) {
+                        Toast.makeText(this, "Firebase removed, switching to ntfy", Toast.LENGTH_SHORT).show()
+                    }
+
+                    fetchNtfyConfigAndConnect(webAppUrl)
+                }
+            }
+        }.start()
     }
 
     fun fetchNtfyConfigAndConnect(webAppUrl: String) {

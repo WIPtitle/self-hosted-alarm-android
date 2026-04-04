@@ -16,6 +16,7 @@ class PreferencesManager(context: Context) {
         private const val KEY_LAST_MESSAGE_ID = "last_message_id"
         private const val KEY_NTFY_CONNECTED = "ntfy_connected"
         private const val KEY_AUTO_RESTART_WORKER_VERSION = "auto_restart_worker_version"
+        private const val KEY_FIREBASE_MODE = "firebase_mode"
     }
 
     var webAppUrl: String?
@@ -45,6 +46,10 @@ class PreferencesManager(context: Context) {
     var isNtfyConnected: Boolean
         get() = prefs.getBoolean(KEY_NTFY_CONNECTED, false)
         set(value) = prefs.edit().putBoolean(KEY_NTFY_CONNECTED, value).apply()
+
+    var isFirebaseMode: Boolean
+        get() = prefs.getBoolean(KEY_FIREBASE_MODE, false)
+        set(value) = prefs.edit().putBoolean(KEY_FIREBASE_MODE, value).apply()
 
     fun getAutoRestartWorkerVersion(): Int {
         return prefs.getInt(KEY_AUTO_RESTART_WORKER_VERSION, 0)

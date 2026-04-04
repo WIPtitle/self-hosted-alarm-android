@@ -25,6 +25,14 @@ class SubscriberServiceManager(private val context: Context) {
         override suspend fun doWork(): Result {
             withContext(Dispatchers.IO) {
                 val prefsManager = PreferencesManager(context)
+                // If firebase mode is enabled, ensure ntfy service is stopped
+                if (prefsManager.isFirebaseMode) {
+                    Intent(context, SubscriberService::class.java).also {
+                        it.action = SubscriberService.Action.STOP.name
+                        context.stopService(it)
+                    }
+                    return@withContext Result.success()
+                }
                 val action = if (prefsManager.isNtfyConfigured()) SubscriberService.Action.START else SubscriberService.Action.STOP
                 val serviceState = SubscriberService.readServiceState(context)
                 if (serviceState == SubscriberService.ServiceState.STOPPED && action == SubscriberService.Action.STOP) {
@@ -46,6 +54,16 @@ class SubscriberServiceManager(private val context: Context) {
         fun refresh(context: Context) {
             val manager = SubscriberServiceManager(context)
             manager.refresh()
+        }
+
+        fun stop(context: Context) {
+            // Stop the service
+            Intent(context, SubscriberService::class.java).also {
+                it.action = SubscriberService.Action.STOP.name
+                context.stopService(it)
+            }
+            // Cancel periodic worker
+            WorkManager.getInstance(context).cancelUniqueWork(SubscriberService.SERVICE_START_WORKER_WORK_NAME_PERIODIC)
         }
     }
 }
