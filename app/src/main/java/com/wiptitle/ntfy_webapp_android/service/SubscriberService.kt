@@ -34,6 +34,12 @@ class SubscriberService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand executed with startId: $startId")
+        // Firebase mode check - don't run ntfy if Firebase is active
+        if (PreferencesManager(this).isFirebaseMode) {
+            Log.d(TAG, "Firebase mode is active, stopping ntfy service")
+            stopService()
+            return START_NOT_STICKY
+        }
         if (intent != null) {
             Log.d(TAG, "using an intent with action ${intent.action}")
             when (intent.action) {
@@ -253,6 +259,7 @@ class SubscriberService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent) {
+        if (PreferencesManager(this).isFirebaseMode) return
         val restartServiceIntent = Intent(applicationContext, SubscriberService::class.java).also {
             it.setPackage(packageName)
         }
@@ -264,6 +271,7 @@ class SubscriberService : Service() {
 
     class BootStartReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            if (PreferencesManager(context).isFirebaseMode) return
             Log.d(TAG, "BootStartReceiver: onReceive called")
             SubscriberServiceManager.refresh(context)
         }
@@ -271,6 +279,7 @@ class SubscriberService : Service() {
 
     class AutoRestartReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            if (PreferencesManager(context).isFirebaseMode) return
             Log.d(TAG, "AutoRestartReceiver: onReceive called")
             SubscriberServiceManager.refresh(context)
         }
