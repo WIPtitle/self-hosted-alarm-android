@@ -50,14 +50,6 @@ class MainActivity : AppCompatActivity() {
 
         Log.d(TAG, "onCreate started")
 
-        try {
-            CookieManager.getInstance().removeAllCookies(null)
-            CookieManager.getInstance().flush()
-            WebStorage.getInstance().deleteAllData()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
         WebView.clearClientCertPreferences(null)
 
         setupStatusBar()
@@ -262,22 +254,7 @@ class MainActivity : AppCompatActivity() {
             webView.clearHistory()
             webView.clearSslPreferences()
             webView.clearFormData()
-
-            val cookieManager = CookieManager.getInstance()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                cookieManager.removeAllCookies(null)
-                cookieManager.flush()
-            } else {
-                cookieManager.removeAllCookie()
-                cookieManager.removeSessionCookie()
-            }
-
             webView.clearMatches()
-            WebStorage.getInstance().deleteAllData()
-
-            deleteDatabase("webview.db")
-            deleteDatabase("webviewCache.db")
-
         } catch (e: Exception) {
             e.printStackTrace()
         }
